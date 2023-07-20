@@ -34,6 +34,11 @@ COPY --from=builder /conductor/server/build/libs/conductor-server-*-boot.jar /ap
 # Copy the files for the server into the app folders
 RUN chmod +x /app/startup.sh
 
+RUN apt-get update && apt-get install -y bash curl && curl -1sLf \
+    'https://dl.cloudsmith.io/public/infisical/infisical-cli/setup.deb.sh' | bash \
+    && apt-get update && apt-get install -y infisical
+
+
 HEALTHCHECK --interval=60s --timeout=30s --retries=10 CMD curl -I -XGET http://localhost:8080/health || exit 1
 
 CMD [ "/app/startup.sh" ]

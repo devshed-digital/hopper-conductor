@@ -1,0 +1,267 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Deploy Conductor Server on ECS and expose through API Gateway
+Parameters:
+  Stage:
+    Type: String
+    Description: "Stage to deploy: dev, staging or prod"
+    Default: dev
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+  InstanceType:
+    Type: String
+    Description: Instance type
+    Default: "t3.micro"
+
+Mappings:
+  Defaults:
+    AMI:
+      ID: ami-078c97cf1cefd1b38
+    VPC:
+      ID: vpc-0db3c9faf86f8177f
+    Subnet:
+      ID: subnet-0b46d06c51113a138
+    SecurityGroup:
+      ID: sg-047a791d324405128
+
+Resources:
+  ECSCluster:
+    Type: "AWS::ECS::Cluster"
+    Properties:
+      ClusterName: !Join ["", ["conductor-", !Ref "Stage"]]
+
+  CloudWatchLogsGroup:
+    Type: "AWS::Logs::LogGroup"
+    Properties:
+      LogGroupName: !Join ["", ["ecs/", "conductor-", !Ref "Stage"]]
+
+  ECSAutoScalingGroup:
+    Type: "AWS::AutoScaling::AutoScalingGroup"
+    Properties:
+      VPCZoneIdentifier:
+        - !FindInMap [Defaults, Subnet, ID]
+      LaunchConfigurationName: !Ref ContainerInstances
+      MinSize: "1"
+      MaxSize: "1"
+      DesiredCapacity: "1"
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT15M
+    UpdatePolicy:
+      AutoScalingReplacingUpdate:
+        WillReplace: "true"
+
+  ContainerInstances:
+    Type: "AWS::AutoScaling::LaunchConfiguration"
+    Properties:
+      ImageId: !FindInMap [Defaults, AMI, ID]
+      SecurityGroups:
+        - !FindInMap [Defaults, SecurityGroup, ID]
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      UserData: !Base64
+        "Fn::Join":
+          - ""
+          - - |
+              #!/bin/bash -xe
+            - echo ECS_CLUSTER=
+            - !Ref ECSCluster
+            - |2
+              >> /etc/ecs/ecs.config
+            - |
+              yum install -y aws-cfn-bootstrap
+            - "/opt/aws/bin/cfn-signal -e $? "
+            - "         --stack "
+            - !Ref "AWS::StackName"
+            - "         --resource ECSAutoScalingGroup "
+            - "         --region us-west-2"
+            - |+
+
+  EC2InstanceProfile:
+    Type: "AWS::IAM::InstanceProfile"
+    Properties:
+      Path: /
+      Roles:
+        - !Ref EC2Role
+
+  EC2Role:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      Path: /
+      Policies:
+        - PolicyName: ecs-service
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "ecs:CreateCluster"
+                  - "ecs:DeregisterContainerInstance"
+                  - "ecs:DiscoverPollEndpoint"
+                  - "ecs:Poll"
+                  - "ecs:RegisterContainerInstance"
+                  - "ecs:StartTelemetrySession"
+                  - "ecs:Submit*"
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                Resource: "*"
+
+  TaskExecutionRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      Path: /
+      Policies:
+        - PolicyName: ecs-task-execution
+          PolicyDocument:
+            Statement:
+              Effect: "Allow"
+              Action:
+                - "secretsmanager:GetSecretValue"
+                - "kms:Decrypt"
+              Resource:
+                - arn:aws:secretsmanager:us-west-2:341073124655:secret:*
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+        - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
+
+  TaskDefinition:
+    Type: "AWS::ECS::TaskDefinition"
+    Properties:
+      Family: !Join ["", ["conductor-", !Ref "Stage"]]
+      ContainerDefinitions:
+        - Name: !Join ["", ["conductor-", !Ref "Stage"]]
+          Cpu: "80"
+          Image: "341073124655.dkr.ecr.us-west-2.amazonaws.com/conductor"
+          Memory: "700"
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref CloudWatchLogsGroup
+              awslogs-region: "us-west-2"
+              awslogs-stream-prefix: !Join ["", ["conductor-", !Ref "Stage"]]
+          PortMappings:
+            - ContainerPort: 8080
+          Secrets:
+            - Name: INFISICAL_TOKEN
+              ValueFrom: "arn:aws:secretsmanager:us-west-2:341073124655:secret:infisical_token-yrUayq:dev::"
+          Environment:
+            - Name: CONFIG_PROP
+              Value: config-postgres.properties
+      ExecutionRoleArn: !Ref TaskExecutionRole
+
+  ServiceDefinition:
+    Type: "AWS::ECS::Service"
+    DependsOn: ECSAutoScalingGroup
+    Properties:
+      ServiceName: !Join ["", ["conductor-", !Ref "Stage"]]
+      Cluster: !Ref ECSCluster
+      DesiredCount: 1
+      TaskDefinition: !Ref TaskDefinition
+      DeploymentConfiguration:
+        MaximumPercent: 100
+        MinimumHealthyPercent: 0
+      ServiceRegistries:
+        - ContainerName: !Join ["", ["conductor-", !Ref "Stage"]]
+          ContainerPort: 8080
+          RegistryArn: !GetAtt DiscoverySrv.Arn
+
+  PrivateNamespace:
+    Type: AWS::ServiceDiscovery::PrivateDnsNamespace
+    Properties:
+      Name: devshed-internal
+      Vpc: !FindInMap [Defaults, VPC, ID]
+
+  DiscoverySrv:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: !Join ["", ["conductor-", !Ref "Stage"]]
+      NamespaceId: !Ref PrivateNamespace
+      DnsConfig:
+        RoutingPolicy: MULTIVALUE
+        DnsRecords:
+          - TTL: 60
+            Type: SRV
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+
+  APIGWVPClinkSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !FindInMap [Defaults, VPC, ID]
+      GroupName: !Join ["", ["vpclink-conductor-", !Ref "Stage"]]
+      GroupDescription: APIGW vpclink security group
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+
+  AddIngressToSecurityGroupFromVPClink:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Ingress from the VPC Link
+      GroupId: !FindInMap [Defaults, SecurityGroup, ID]
+      IpProtocol: "-1"
+      SourceSecurityGroupId: !Ref APIGWVPClinkSG
+
+  VPCLink:
+    Type: AWS::ApiGatewayV2::VpcLink
+    Properties:
+      Name: !Join ["", ["conductor-", !Ref "Stage"]]
+      SubnetIds:
+        - !FindInMap [Defaults, Subnet, ID]
+      SecurityGroupIds:
+        - !Ref APIGWVPClinkSG
+
+  ApiGateway:
+    Type: "AWS::ApiGatewayV2::Api"
+    Properties:
+      Name: !Join ["", ["conductor-", !Ref "Stage"]]
+      ProtocolType: HTTP
+
+  ApiVpcIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref ApiGateway
+      ConnectionId: !Ref VPCLink
+      ConnectionType: VPC_LINK
+      IntegrationMethod: ANY
+      IntegrationType: HTTP_PROXY
+      IntegrationUri: !GetAtt DiscoverySrv.Arn
+      PayloadFormatVersion: "1.0"
+      RequestParameters:
+        overwrite:path: $request.path
+
+  ApiRoute:
+    Type: "AWS::ApiGatewayV2::Route"
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: "ANY /{proxy+}"
+      Target: !Join ["/", ["integrations", !Ref ApiVpcIntegration]]
+
+  ApiStage:
+    Type: "AWS::ApiGatewayV2::Stage"
+    Properties:
+      StageName: !Ref Stage
+      AutoDeploy: true
+      ApiId: !Ref ApiGateway
+
+Outputs:
+  ApiUrl:
+    Description: Api Gateway URL
+    Value: !Sub https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Stage}

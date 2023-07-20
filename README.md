@@ -1,6 +1,7 @@
 ![Conductor](docs/docs/img/logo.png)
 
 # Conductor
+
 Conductor is a platform created by Netflix to orchestrate workflows that span across microservices.
 
 [![Github release](https://img.shields.io/github/v/release/Netflix/conductor.svg)](https://GitHub.com/Netflix/conductor/releases)
@@ -8,19 +9,58 @@ Conductor is a platform created by Netflix to orchestrate workflows that span ac
 [![License](https://img.shields.io/github/license/Netflix/conductor.svg)](http://www.apache.org/licenses/LICENSE-2.0)
 [![NetflixOSS Lifecycle](https://img.shields.io/osslifecycle/Netflix/conductor.svg)]()
 
+## Hopper Customizations
+
+Database configured is PostgreSQL. It supports all Conductor's datastores needed: db, queues and search indexes, thus removing the need for Elasticsearch, Redis and other services that might be configured.
+
+To enable PostgreSQL, a dependency was added on file `server/build.gradle`. The dependency version should be the same as the base server:
+
+```
+runtimeOnly "com.netflix.conductor:conductor-postgres-persistence:3.13.7"
+```
+
+Configurations needed for database were customized in file `docker/server/config/config-postgres.properties`, loading from environment variables:
+
+- DATASOURCE_URL
+- DATASOURCE_USERNAME
+- DATASOURCE_PASSWORD
+
+These variables are being loaded dynamically using [Infisical](https://infisical.com). When running the docker image built, you should pass in two environment variables:
+
+- CONFIG_PROP=config-postgres.properties
+- INFISICAL_TOKEN=<> : Generate a service token in Infisical, and make sure you have above variables configured in your Infisical project environment
+
+To build the docker image, use file `docker/server/Dockerfile`.
+
+### AWS Deployment
+
+Docker image is privated hosted in ECR: `341073124655.dkr.ecr.us-west-2.amazonaws.com/conductor`. If you need you can build a new image and push to this repo using your AWS account and AWS CLI.
+
+_Check this [link](https://docs.aws.amazon.com/AmazonECR/latest/userguide/getting-started-cli.html) on how to push images to ECR_
+
+`INFISICAL_TOKEN` Environment variable was pre-configured in SecretsManager, for all stages.
+
+To deploy to AWS, run `sam deploy` inside the root folder.
+
+It will deploy an ECS Cluster running one service, register required services and configs, and expose Conductor APIs through API Gateway. This need to be run for every stage you want, using `sam deploy --parameter-overrides Stage=<stage>`.
+
 ## Workflow Creation in Code
+
 Conductor supports creating workflows using JSON and Code.  
 SDK support for creating workflows using code is available in multiple languages and can be found at https://github.com/conductor-sdk
 
 ## Documentation
-[Main Documentation Site](https://conductor.netflix.com/)  
+
+[Main Documentation Site](https://conductor.netflix.com/)
 
 ## Releases
+
 The latest version is [![Github release](https://img.shields.io/github/v/release/Netflix/conductor.svg)](https://GitHub.com/Netflix/conductor/releases)
 
 [2.31.8](https://github.com/Netflix/conductor/releases/tag/v2.31.8) is the **final** release of `2.31` branch. As of Feb 2022, `1.x` & `2.x` versions are no longer supported.
 
 ## Community Contributions
+
 The modules contributed by the community are housed at [conductor-community](https://github.com/Netflix/conductor-community). Compatible versions of the community modules are released simultaneously with releases of the main modules.
 
 [Discussion Forum](https://github.com/Netflix/conductor/discussions): Please use the forum for questions and discussing ideas and join the community.
@@ -28,18 +68,21 @@ The modules contributed by the community are housed at [conductor-community](htt
 [List of Conductor community projects](/docs/docs/resources/related.md): Backup tool, Cron like workflow starter, Docker containers and more.
 
 ## Getting Started - Building & Running Conductor
-###  Using Docker:
-The easiest way to get started is with Docker containers. Please follow the instructions [here](https://conductor.netflix.com/gettingstarted/docker.html). 
 
-###  From Source:
+### Using Docker:
+
+The easiest way to get started is with Docker containers. Please follow the instructions [here](https://conductor.netflix.com/gettingstarted/docker.html).
+
+### From Source:
+
 Conductor Server is a [Spring Boot](https://spring.io/projects/spring-boot) project and follows all applicable conventions. See instructions [here](http://conductor.netflix.com/gettingstarted/source.html).
 
-
 ## Published Artifacts
+
 Binaries are available from [Netflix OSS Maven](https://artifacts.netflix.net/netflixoss/com/netflix/conductor/) repository, or the [Maven Central Repository](https://search.maven.org/search?q=g:com.netflix.conductor).
 
 | Artifact                        | Description                                                                                     |
-|---------------------------------|-------------------------------------------------------------------------------------------------|
+| ------------------------------- | ----------------------------------------------------------------------------------------------- |
 | conductor-common                | Common models used by various conductor modules                                                 |
 | conductor-core                  | Core Conductor module                                                                           |
 | conductor-redis-persistence     | Persistence and queue using Redis/Dynomite                                                      |
@@ -62,23 +105,27 @@ Binaries are available from [Netflix OSS Maven](https://artifacts.netflix.net/ne
 
 ## Database Requirements
 
-* The default persistence used is [Dynomite](https://github.com/Netflix/dynomite)
-* For queues, we are relying on [dyno-queues](https://github.com/Netflix/dyno-queues)
-* The indexing backend is [Elasticsearch](https://www.elastic.co/) (6.x)
+- The default persistence used is [Dynomite](https://github.com/Netflix/dynomite)
+- For queues, we are relying on [dyno-queues](https://github.com/Netflix/dyno-queues)
+- The indexing backend is [Elasticsearch](https://www.elastic.co/) (6.x)
 
 ## Other Requirements
-* JDK 11+
-* UI requires Node 14 to build. Earlier Node versions may work but is untested.
+
+- JDK 11+
+- UI requires Node 14 to build. Earlier Node versions may work but is untested.
 
 ## Get Support
-Conductor is maintained by Media Workflow Infrastructure team at Netflix.  Use Github issue tracking for filing issues and the [Discussion Forum](https://github.com/Netflix/conductor/discussions) for any other questions, ideas or support requests. 
+
+Conductor is maintained by Media Workflow Infrastructure team at Netflix. Use Github issue tracking for filing issues and the [Discussion Forum](https://github.com/Netflix/conductor/discussions) for any other questions, ideas or support requests.
 
 ## Contributions
+
 Whether it is a small documentation correction, bug fix or a new feature, contributions are highly appreciated. We just ask you to follow standard OSS guidelines. The [Discussion Forum](https://github.com/Netflix/conductor/discussions) is a good place to ask questions, discuss new features and explore ideas. Please check with us before spending too much time, only to find out later that someone else is already working on a similar feature.
 
 `main` branch is the current working branch. Please send your PR's to `main` branch, making sure that it builds on your local system successfully. Also, please make sure all the conflicts are resolved.
 
 ## License
+
 Copyright 2022 Netflix, Inc.
 
 Licensed under the Apache License, Version 2.0 (the "License");
